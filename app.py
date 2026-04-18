@@ -4,37 +4,59 @@ import numpy as np
 import matplotlib.pyplot as plt
 from fpdf import FPDF
 
-# --- 1. DYNAMIC AI SIMULATOR (MOLECULAR AFFINITY) ---
-def fetch_drug_data(drug_name):
-    """Fetches real-time chemical descriptors from PubChem."""
-    try:
-        url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{drug_name}/property/MolecularWeight,LogP/JSON"
-        res = requests.get(url, timeout=5).json()
-        props = res['PropertyTable']['Properties'][0]
-        return {"MW": props.get("MolecularWeight", 400.0), "LogP": props.get("XLogP") or props.get("LogP", 3.0)}
-    except:
-        return {"MW": 400.0, "LogP": 3.0}
+# --- STEP 1: DYNAMIC SOURCING ---
+if st.session_state.step == 1:
+    st.header("Step 1: AI Molecular Sourcing & Sizing")
+    
+    # Input Area
+    with st.container():
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            drug_input = st.text_input("Identify Target Drug", placeholder="e.g. Ibuprofen")
+        with col2:
+            st.write("##") # Alignment spacer
+            if st.button("Perform AI Simulation", use_container_width=True):
+                if drug_input:
+                    with st.spinner("Processing chemical fingerprint..."):
+                        props = fetch_drug_data(drug_input)
+                        st.session_state.drug = drug_input
+                        st.session_state.props = props
+                        # This generates the unique list based on the drug's LogP
+                        st.session_state.recs = get_unique_recommendations(props)
+                else:
+                    st.error("Please enter a drug name.")
 
-def get_unique_recommendations(props):
-    """Generates 5 recommendations by mapping LogP to Excipient chemistry."""
-    # Scientific Library
-    LIB = {
-        "Oils": ["Capryol 90", "Labrafac PG", "Sefsol 218", "Castor Oil", "Oleic Acid", "Miglyol 812", "Soybean Oil", "Olive Oil", "IPM", "Corn Oil", "MCT Oil", "Peanut Oil"],
-        "Surfactants": ["Tween 80", "Cremophor EL", "Labrasol", "Span 80", "Kolliphor RH40", "Gelucire 44/14", "Solutol HS15", "Tween 20", "Poloxamer 188", "Pluronic F127"],
-        "Co-Surfactants": ["Transcutol P", "PEG 400", "Propylene Glycol", "Ethanol", "Plurol Oleique", "PEG 200", "Glycerin", "Isopropanol", "Butanol", "Menthol"]
-    }
-    
-    # The 'Anchor' ensures Ibuprofen and Ketoconazole produce DIFFERENT top 5 lists
-    anchor = int(abs(props['LogP'] * 100))
-    
-    results = {}
-    for cat, items in LIB.items():
-        # Deterministic shuffle based on the specific drug's properties
-        rng = np.random.default_rng(anchor + len(cat))
-        shuffled = list(items)
-        rng.shuffle(shuffled)
-        results[cat] = shuffled[:5] # Always exactly 5
-    return results
+    # Results Display Area (Only shows if recs exist in session state)
+    if st.session_state.recs:
+        st.divider()
+        st.subheader(f"Top 5 AI-Matched Components for: {st.session_state.drug.upper()}")
+        
+        # Displaying the molecular properties used for the search
+        p = st.session_state.props
+        st.caption(f"Molecular Fingerprint: MW: {p['MW']} | LogP: {p['LogP']}")
+        
+        r = st.session_state.recs
+        c1, c2, c3 = st.columns(3)
+        
+        with c1: 
+            st.info("### 💧 Oils")
+            for item in r['Oils']: 
+                st.markdown(f"- **{item}**")
+                
+        with c2: 
+            st.success("### 🧪 Surfactants")
+            for item in r['Surfactants']: 
+                st.markdown(f"- **{item}**")
+                
+        with c3: 
+            st.warning("### 🧬 Co-Surfactants")
+            for item in r['Co-Surfactants']: 
+                st.markdown(f"- **{item}**")
+        
+        st.write("##") # Vertical spacing
+        if st.button("Proceed to Selection ➡️", use_container_width=True, type="primary"):
+            st.session_state.step = 2
+            st.rerun()
 
 # --- 2. SESSION STATE ---
 if 'step' not in st.session_state:
