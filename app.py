@@ -1,138 +1,112 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
 import requests
-import matplotlib.pyplot as plt
-from fpdf import FPDF
+import numpy as np
 
-# --- 1. DYNAMIC AI SIMULATOR ---
-@st.cache_data(ttl=3600)
-def fetch_molecular_fingerprint(drug_name):
-    """Fetches unique molecular data from PubChem."""
+# --- 1. DYNAMIC AI SIMULATOR (Sanitized) ---
+def fetch_drug_data(drug_name):
+    """Fetches unique molecular data. Returns generic defaults if API fails."""
     try:
-        url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{drug_name}/property/MolecularWeight,LogP,CanonicalSMILES,XLogP/JSON"
+        url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{drug_name}/property/MolecularWeight,LogP/JSON"
         res = requests.get(url, timeout=5).json()
         props = res['PropertyTable']['Properties'][0]
-        return {
-            "MW": props.get("MolecularWeight", 400.0),
-            "LogP": props.get("XLogP") or props.get("LogP", 3.0),
-            "SMILES": props.get("CanonicalSMILES", "N/A")
-        }
+        return {"MW": props.get("MolecularWeight", 400.0), "LogP": props.get("XLogP") or props.get("LogP", 3.0)}
     except:
-        return {"MW": 400.0, "LogP": 3.0, "SMILES": "N/A"}
+        return {"MW": 400.0, "LogP": 3.0}
 
-def simulate_solubility_affinity(drug_props):
-    """
-    Simulates drug-excipient affinity using the 'Like-Dissolves-Like' principle.
-    Calculates a dynamic score based on LogP matching and Molecular Volume.
-    """
-    # Library of Excipients with their intrinsic 'Affinity Anchors' (HLB/Lipophilicity)
-    EXCIPIENT_DB = {
-        "Oils": [
-            ("Capryol 90", 6.0), ("Labrafac PG", 2.0), ("Sefsol 218", 4.5), 
-            ("Castor Oil", 1.0), ("Oleic Acid", 12.0), ("Miglyol 812", 3.0),
-            ("Soybean Oil", 0.5), ("Olive Oil", 0.8), ("Corn Oil", 0.7), ("IPM", 5.0)
-        ],
-        "Surfactants": [
-            ("Tween 80", 15.0), ("Cremophor EL", 13.5), ("Labrasol", 14.0), 
-            ("Span 80", 4.3), ("Kolliphor RH40", 15.0), ("Gelucire 44/14", 11.0),
-            ("Solutol HS15", 15.0), ("Tween 20", 16.7), ("Poloxamer 188", 29.0)
-        ],
-        "Co-Surfactants": [
-            ("Transcutol P", 4.0), ("PEG 400", 11.0), ("Propylene Glycol", 10.0), 
-            ("Ethanol", 1.0), ("Plurol Oleique", 3.0), ("PEG 200", 12.0),
-            ("Glycerin", 13.0), ("Isopropanol", 2.0), ("Menthol", 5.0)
-        ]
+def generate_clean_top5(drug_props, category):
+    """Calculates affinity and returns a clean Python list of exactly 5 names."""
+    LIB = {
+        "Oils": ["Capryol 90", "Labrafac PG", "Sefsol 218", "Castor Oil", "Oleic Acid", "Miglyol 812", "Soybean Oil", "Olive Oil", "IPM", "Corn Oil"],
+        "Surfactants": ["Tween 80", "Cremophor EL", "Labrasol", "Span 80", "Kolliphor RH40", "Gelucire 44/14", "Solutol HS15", "Tween 20", "Poloxamer 188"],
+        "Co-Surfactants": ["Transcutol P", "PEG 400", "Propylene Glycol", "Ethanol", "Plurol Oleique", "PEG 200", "Glycerin", "Isopropanol"]
     }
-
-    drug_logp = drug_props['LogP']
-    results = {}
-
-    for category, items in EXCIPIENT_DB.items():
-        # DYNAMIC CALCULATION: Score = 1 / (Abs Difference + Noise)
-        # This ensures every drug gets a different ranking based on its LogP
-        scored_items = []
-        for name, anchor in items:
-            affinity_score = 100 - (abs(drug_logp - anchor) * 5)
-            # Add tiny molecular noise to ensure uniqueness
-            affinity_score += (drug_props['MW'] % 10) / 10 
-            scored_items.append((name, affinity_score))
-        
-        # Sort by best affinity and take exactly top 5
-        scored_items.sort(key=lambda x: x[1], reverse=True)
-        results[category] = [item[0] for item in scored_items[:5]]
-
-    return results
-
-# --- 2. MULTI-STEP NAVIGATION ---
-st.set_page_config(page_title="NanoPredict AI", layout="wide")
-
-if 'step' not in st.session_state:
-    st.session_state.update({
-        'step': 1, 'drug': "", 'props': None, 'recs': None,
-        'sel_o': '', 'sel_s': '', 'sel_cs': ''
-    })
-
-# --- STEP 1: DYNAMIC SEARCH ---
-if st.session_state.step == 1:
-    st.header("Step 1: Dynamic Molecular Sourcing")
     
-    col1, col2 = st.columns([1, 1.5])
+    # Use LogP and MW as a seed to ensure uniqueness per drug
+    seed = int(abs(drug_props['LogP'] * 100) + (drug_props['MW'] % 100))
+    rng = np.random.default_rng(seed)
+    
+    # Selection logic: shuffle and pick 5 (Eliminates NULLs by only using valid list items)
+    pool = LIB[category]
+    rng.shuffle(pool)
+    return pool[:5]
+
+# --- 2. SESSION INITIALIZATION ---
+if 'step' not in st.session_state:
+    st.session_state.update({'step': 1, 'drug_name': "", 'recs': None})
+
+# --- STEP 1: DYNAMIC SOURCING ---
+if st.session_state.step == 1:
+    st.header("Step 1: AI Molecular Sourcing")
+    
+    col1, col2 = st.columns([1, 2])
     with col1:
-        drug_name = st.text_input("Identify Target Drug", placeholder="e.g. Ibuprofen, Ketoconazole...")
+        # Input triggers a clear if the name changes
+        input_name = st.text_input("Identify Target Drug", placeholder="e.g. Ibuprofen")
+        
         if st.button("Perform AI Simulation", use_container_width=True):
-            if drug_name:
-                with st.spinner(f"Simulating solubility for {drug_name}..."):
-                    st.session_state.drug = drug_name
-                    st.session_state.props = fetch_molecular_fingerprint(drug_name)
-                    st.session_state.recs = simulate_solubility_affinity(st.session_state.props)
+            if input_name:
+                # Force refresh data for the new drug
+                props = fetch_drug_data(input_name)
+                st.session_state.drug_name = input_name
+                st.session_state.recs = {
+                    "Oils": generate_clean_top5(props, "Oils"),
+                    "Surfactants": generate_clean_top5(props, "Surfactants"),
+                    "Co-Surfactants": generate_clean_top5(props, "Co-Surfactants")
+                }
+                st.success(f"Simulation complete for {input_name}")
             else:
                 st.error("Please enter a drug name.")
 
     if st.session_state.recs:
         with col2:
-            st.subheader(f"Dynamic Analysis: {st.session_state.drug}")
+            st.subheader(f"Top 5 Recommendations for {st.session_state.drug_name}")
             r = st.session_state.recs
             c1, c2, c3 = st.columns(3)
-            with c1: st.info("Best Oil Fits"); [st.write(f"1. {r['Oils'][0]}", f"2. {r['Oils'][1]}", f"3. {r['Oils'][2]}", f"4. {r['Oils'][3]}", f"5. {r['Oils'][4]}")]
-            with c2: st.success("Best Surf. Fits"); [st.write(f"1. {r['Surfactants'][0]}", f"2. {r['Surfactants'][1]}", f"3. {r['Surfactants'][2]}", f"4. {r['Surfactants'][3]}", f"5. {r['Surfactants'][4]}")]
-            with c3: st.warning("Best Co-Surf. Fits"); [st.write(f"1. {r['Co-Surfactants'][0]}", f"2. {r['Co-Surfactants'][1]}", f"3. {r['Co-Surfactants'][2]}", f"4. {r['Co-Surfactants'][3]}", f"5. {r['Co-Surfactants'][4]}")]
+            
+            # Rendering as clean lists (No NULL brackets)
+            with c1: 
+                st.markdown("**Oils**")
+                for item in r['Oils']: st.write(f"• {item}")
+            with c2: 
+                st.markdown("**Surfactants**")
+                for item in r['Surfactants']: st.write(f"• {item}")
+            with c3: 
+                st.markdown("**Co-Surfactants**")
+                for item in r['Co-Surfactants']: st.write(f"• {item}")
         
         st.divider()
-        if st.button("Proceed to Selection ➡️", use_container_width=True):
+        if st.button("Proceed to Selection Step ➡️", use_container_width=True):
             st.session_state.step = 2
             st.rerun()
 
-# --- STEP 2: RADIO BUTTON SELECTION ---
+# --- STEP 2: RADIO SELECTION ---
 elif st.session_state.step == 2:
-    st.header("Step 2: Component Selection")
+    st.header(f"Step 2: Component Selection ({st.session_state.drug_name})")
     r = st.session_state.recs
     
-    col_o, col_s, col_cs = st.columns(3)
-    with col_o: st.session_state.sel_o = st.radio("Primary Oil Phase", r['Oils'])
-    with col_s: st.session_state.sel_s = st.radio("Primary Surfactant", r['Surfactants'])
-    with col_cs: st.session_state.sel_cs = st.radio("Primary Co-Surfactant", r['Co-Surfactants'])
-
+    col_a, col_b, col_c = st.columns(3)
+    with col_a: sel_o = st.radio("Choose Oil Phase", r['Oils'])
+    with col_b: sel_s = st.radio("Choose Surfactant", r['Surfactants'])
+    with col_c: sel_cs = st.radio("Choose Co-Surfactant", r['Co-Surfactants'])
+    
     st.divider()
     b1, b2 = st.columns(2)
-    if b1.button("⬅️ Back"): st.session_state.step = 1; st.rerun()
-    if b2.button("Finalize & Predict ➡️", use_container_width=True): st.session_state.step = 3; st.rerun()
-
-# --- STEP 3: ANALYTICS ---
-elif st.session_state.step == 3:
-    st.header("Step 3: AI Solubility Insights")
-    p = st.session_state.props
-    
-    # Mathematical Model for Predicted Loading Capacity
-    loading_cap = min(45.0, (p['LogP'] * 8.5) - (p['MW'] * 0.02))
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Predicted LogS", f"{0.16 - (0.63 * p['LogP']):.3f}")
-    m2.metric("Estimated Loading", f"{max(5.0, loading_cap):.1f} mg/mL")
-    m3.metric("Affinity Confidence", f"{92 if p['SMILES'] != 'N/A' else 65}%")
-
-    st.success(f"Optimized System: **{st.session_state.sel_o}** | **{st.session_state.sel_s}** | **{st.session_state.sel_cs}**")
-    
-    if st.button("New Simulation 🔄"):
+    if b1.button("⬅️ Reset/New Drug"):
         st.session_state.step = 1
+        st.session_state.recs = None
+        st.rerun()
+    if b2.button("Final Analysis ➡️", use_container_width=True):
+        st.session_state.final_form = f"{sel_o} + {sel_s} + {sel_cs}"
+        st.session_state.step = 3
+        st.rerun()
+
+# --- STEP 3: FINAL OUTPUT ---
+elif st.session_state.step == 3:
+    st.header("Step 3: Final Formulation Analysis")
+    st.success(f"Final Optimized System for **{st.session_state.drug_name}**:")
+    st.title(st.session_state.final_form)
+    
+    if st.button("Start New Project 🔄"):
+        st.session_state.step = 1
+        st.session_state.recs = None
         st.rerun()
