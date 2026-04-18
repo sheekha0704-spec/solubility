@@ -139,7 +139,7 @@ elif st.session_state.step == 3:
     st.pyplot(fig); plt.savefig("final_plot.png")
 
     def generate_report():
-        pdf = FPDF2()
+        pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", 'B', 16)
         pdf.cell(190, 10, "NanoPredict Pro: Solubility Optimization Report", 0, 1, 'C')
